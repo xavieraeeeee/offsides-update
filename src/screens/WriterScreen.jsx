@@ -1,384 +1,223 @@
-import { SidechatSimpleAsset } from 'sidechat.js/src/types/SidechatTypes.js';
-import React, { useEffect } from 'react';
-import { View, StatusBar, Image } from 'react-native';
+import React, { useState, useContext } from 'react';
 import {
-  Appbar,
-  useTheme,
-  ProgressBar,
-  Snackbar,
-  TextInput,
-  Icon,
+  View,
   Text,
-  TouchableRipple,
-  Tooltip,
-  IconButton,
+  TextInput,
+  TouchableOpacity,
+  StyleSheet,
+  SafeAreaView,
+  KeyboardAvoidingView,
+  Platform,
   ActivityIndicator,
-  Button,
-  Divider,
-} from 'react-native-paper';
+} from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { AppContext } from '../App';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { launchImageLibrary } from 'react-native-image-picker';
-import { useMMKVBoolean, useMMKVString } from 'react-native-mmkv';
-import Post from '../components/Post';
 
-const BORDER_RADIUS = 10;
+const MAX_CHARS = 300;
 
-function WriterScreen({ navigation, route }) {
-  const { mode, groupID, postID, replyID, parentID, repostID } = route.params;
-  if (mode != 'comment' && mode != 'post') return false;
-  const { appState } = React.useContext(AppContext);
-  const API = appState.API;
-  const { colors } = useTheme();
-  const insets = useSafeAreaInsets();
-  const [error, setError] = React.useState(false);
-  const [textContent, setTextContent] = React.useState('');
-  const [isUploading, setIsUploading] = React.useState(false);
-  const [postSortMethod, setPostSortMethod] = useMMKVString('postSortMethod');
-  const [anonMode, setAnonMode] = useMMKVBoolean('anonMode');
-  const [asset, setAsset] = React.useState(
-    /** @type {SidechatSimpleAsset} */(null),
-  );
-  const [repost, setRepost] = React.useState(
-    /** @type {SidechatPostOrComment} */(null),
-  );
-  const [isPoll, setIsPoll] = React.useState(false);
-  const [pollOptions, setPollOptions] = React.useState(['', '']);
+export default function WriterScreen({ navigation }) {
+  const { appState } = useContext(AppContext);
+  const [content, setContent] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const addPollOption = () => {
-    if (pollOptions.length < 4) {
-      setPollOptions([...pollOptions, '']);
-    }
-  };
+  const groupName = appState?.schoolGroupName || 'McGill';
+  const remainingChars = MAX_CHARS - content.length;
+  const canPost = content.trim().length > 0 && remainingChars >= 0 && !isSubmitting;
 
-  const removePollOption = (index) => {
-    if (pollOptions.length > 1) {
-      setPollOptions(pollOptions.filter((_, i) => i !== index));
-    }
-  };
-
-  const updatePollOption = (index, text) => {
-    const newOptions = [...pollOptions];
-    newOptions[index] = text;
-    setPollOptions(newOptions);
-  };
-
-  React.useEffect(() => {
-    if (repostID) {
-      API.getPost(repostID).then((p) => {
-        if (p) {
-          setRepost(p);
-        }
-      });
-    }
-  }, [repostID])
-
-  const isPollValid = !isPoll || pollOptions.every(opt => opt.trim().length > 0);
-
-  const createPostOrComment = async () => {
-    if (mode == 'post') {
-      const validPollOptions = isPoll ? pollOptions : undefined;
-
-      const p = await API.createPost(
-        textContent,
-        groupID,
-        asset ? [asset] : [],
-        null,
-        null,
-        anonMode,
-        repostID,
-        validPollOptions,
-      );
-      if (!p?.message) {
-        setPostSortMethod('recent');
-        navigation.replace('Home');
+  const handlePost = async () => {
+    if (!canPost) return;
+    setIsSubmitting(true);
+    try {
+      if (appState?.API?.createPost) {
+        await appState.API.createPost({
+          group_id: appState.groupID || appState.schoolGroupID,
+          text: content.trim(),
+        });
       }
-    } else if (mode == 'comment') {
-      if (parentID) {
-        const c = await API.createComment(
-          postID,
-          textContent,
-          groupID,
-          replyID,
-          parentID,
-          asset ? [asset] : [],
-          null,
-          anonMode);
-        if (!c?.message) {
-          navigation.pop();
-        }
-      } else {
-        const c = await API.createComment(
-          postID,
-          textContent,
-          groupID,
-          replyID,
-          null,
-          asset ? [asset] : [],
-          null,
-          anonMode);
-        if (!c?.message) {
-          navigation.pop();
-        }
-      }
+      navigation.goBack();
+    } catch (err) {
+      console.error('Failed to publish post:', err);
+    } finally {
+      setIsSubmitting(false);
     }
-  };
-
-  const uploadImage = async () => {
-    const result = await launchImageLibrary({
-      mediaType: 'photo',
-      quality: 1,
-      maxHeight: 1800,
-      maxWidth: 1800,
-    });
-    if (result.didCancel || result.errorMessage) return;
-    setIsUploading(true);
-    const photo = result.assets[0];
-    photo.height;
-    const assetURL = await API.uploadAsset(
-      photo.uri,
-      photo.type,
-      photo.fileName,
-    );
-    setIsUploading(false);
-    setAsset({
-      url: assetURL,
-      type: photo.type.split('/')[0],
-      height: photo.height,
-      width: photo.width,
-      content_type: photo.type.split('/')[1],
-      id: assetURL.split('/v1/assets/library/')[1],
-    });
   };
 
   return (
-    <View style={{ backgroundColor: colors.background, flex: 1 }}>
-      <StatusBar animated={true} backgroundColor={colors.elevation.level2} />
-      <Appbar.Header elevated={true}>
-        <Appbar.BackAction onPress={() => navigation.goBack()} />
-        <Appbar.Content title={`New ${mode}`} />
-        <Tooltip title="Anonymous mode">
-          <Appbar.Action
-            icon={anonMode ? 'incognito' : 'incognito-off'}
-            onPress={() =>
-              setAnonMode(!anonMode)
-            }
-          />
-        </Tooltip>
-        <Appbar.Action
-          icon="send"
-          onPress={createPostOrComment}
-          disabled={textContent.length < 1 || !isPollValid}
-        />
-      </Appbar.Header>
-      <ProgressBar
-        indeterminate={true}
-        visible={false}
-        style={{ position: 'absolute', top: 0, left: 0 }}
-      />
-      <View style={{ flexDirection: 'column', flex: 1 }}>
-        <View style={{ flex: 1 }}>
+    <SafeAreaView style={styles.safeArea}>
+      <KeyboardAvoidingView
+        style={styles.container}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+        {/* 1. Header: Close Button, Target Community, Post Action Pill */}
+        <View style={styles.header}>
+          <TouchableOpacity
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+            onPress={() => navigation.goBack()}
+          >
+            <Ionicons name="close" size={26} color="#FFFFFF" />
+          </TouchableOpacity>
+
+          <View style={styles.communityBadge}>
+            <View style={styles.communityDot} />
+            <Text style={styles.communityText}>{groupName}</Text>
+          </View>
+
+          <TouchableOpacity
+            style={[styles.postButton, !canPost && styles.postButtonDisabled]}
+            disabled={!canPost}
+            onPress={handlePost}
+          >
+            {isSubmitting ? (
+              <ActivityIndicator size="small" color="#FFFFFF" />
+            ) : (
+              <Text style={[styles.postButtonText, !canPost && styles.postButtonTextDisabled]}>
+                Post
+              </Text>
+            )}
+          </TouchableOpacity>
+        </View>
+
+        {/* 2. Text Input Body */}
+        <View style={styles.inputContainer}>
           <TextInput
-            style={{
-              flex: 1,
-              borderRadius: BORDER_RADIUS,
-              borderBottomWidth: 0,
-              backgroundColor: colors.elevation.level3,
-              fontSize: 20,
-              marginHorizontal: 10,
-              marginVertical: 15,
-              flexDirection: 'column',
-            }}
-            contentStyle={{
-              height: '100%',
-              paddingTop: 10,
-              paddingBottom: 10,
-            }}
-            outlineStyle={{ borderRadius: BORDER_RADIUS }}
-            mode="outlined"
-            multiline={true}
-            placeholder={`Write your ${mode} here...`}
-            value={textContent}
-            onChangeText={val => setTextContent(val)}
+            style={styles.textInput}
+            multiline
+            autoFocus
+            maxLength={MAX_CHARS}
+            placeholder="What's happening on campus?"
+            placeholderTextColor="#555555"
+            value={content}
+            onChangeText={setContent}
+            selectionColor="#EE2A35"
           />
-          <ProgressBar style={{ marginHorizontal: 11, marginBottom: 5, borderRadius: 10 }} animatedValue={textContent.length / 256} color={textContent.length > 256 ? colors.error : undefined} />
-          <Text style={{ marginHorizontal: 10, marginBottom: 10, color: textContent.length <= 256 ? colors.onSurface : colors.error }} variant="labelLarge">
-            {textContent.length} / 256 chars
+        </View>
+
+        {/* 3. Bottom Toolbar & Media Triggers */}
+        <View style={styles.bottomToolbar}>
+          <View style={styles.toolIcons}>
+            <TouchableOpacity style={styles.iconButton}>
+              <Ionicons name="image-outline" size={24} color="#8E8E93" />
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.iconButton}>
+              <Ionicons name="stats-chart-outline" size={22} color="#8E8E93" />
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.iconButton}>
+              <Ionicons name="pricetag-outline" size={22} color="#8E8E93" />
+            </TouchableOpacity>
+          </View>
+
+          <Text
+            style={[
+              styles.counterText,
+              remainingChars < 20 && styles.counterWarning,
+              remainingChars < 0 && styles.counterDanger,
+            ]}
+          >
+            {remainingChars}
           </Text>
-          {mode === 'post' && isPoll && (
-            <View style={{ marginHorizontal: 10, marginBottom: 10 }}>
-              <Divider style={{ marginBottom: 10 }} />
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
-                <Icon source="poll" size={20} color={colors.primary} />
-                <Text variant="titleMedium" style={{ marginLeft: 8, color: colors.primary }}>Poll Options</Text>
-              </View>
-              {pollOptions.map((option, index) => (
-                <View key={index} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
-                  <TextInput
-                    style={{
-                      flex: 1,
-                      backgroundColor: colors.elevation.level3,
-                      borderRadius: BORDER_RADIUS,
-                    }}
-                    mode="outlined"
-                    placeholder={`Option ${index + 1}`}
-                    value={option}
-                    onChangeText={(text) => updatePollOption(index, text)}
-                    maxLength={80}
-                  />
-                  {pollOptions.length > 2 && (
-                    <IconButton
-                      icon="close"
-                      size={20}
-                      onPress={() => removePollOption(index)}
-                    />
-                  )}
-                </View>
-              ))}
-              {pollOptions.length < 4 && (
-                <Button
-                  mode="outlined"
-                  onPress={addPollOption}
-                  icon="plus"
-                  style={{ marginTop: 5 }}
-                >
-                  Add Option
-                </Button>
-              )}
-            </View>
-          )}
-          {repost && <View style={{ padding: 10, paddingTop: 0, marginTop: -5 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: "flex-start", marginBottom: -5 }}>
-              <IconButton icon="repeat-variant" size={24} iconColor={colors.primary} style={{ marginLeft: -5, marginRight: -3 }} />
-              <Text variant="labelLarge" style={{ color: colors.primary }}>Reposting</Text>
-            </View>
-            <Post themeColors={colors} apiInstance={API} post={repost} repost={true} minimal={true} />
-          </View>}
         </View>
-        <View
-          style={{
-            backgroundColor: colors.elevation.level5,
-            flex: 0.15,
-            flexDirection: 'row',
-            alignItems: 'center',
-            paddingHorizontal: 15,
-            paddingBottom: insets.bottom,
-          }}>
-          {asset ? (
-            <View style={{ position: 'relative' }}>
-              <IconButton
-                icon="delete"
-                onPress={() => setAsset(null)}
-                containerColor={colors.outline}
-                iconColor={colors.inverseOnSurface}
-                style={{
-                  position: 'absolute',
-                  top: 0,
-                  right: 0,
-                  zIndex: 2,
-                }}
-              />
-              <Image
-                height="80%"
-                resizeMode="cover"
-                style={{
-                  borderStyle: 'solid',
-                  aspectRatio: '1 / 1',
-                  borderWidth: 2,
-                  borderRadius: BORDER_RADIUS,
-                  borderColor: colors.outline,
-                  height: '80%',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}
-                source={{
-                  uri: asset.url,
-                  headers: {
-                    Authorization: `Bearer ${API.userToken}`,
-                  },
-                }}
-              />
-            </View>
-          ) : (
-            <TouchableRipple
-              onPress={uploadImage}
-              style={{ borderRadius: BORDER_RADIUS }}
-              borderless={true}>
-              <View
-                style={{
-                  borderStyle: 'dashed',
-                  aspectRatio: '1 / 1',
-                  borderWidth: 2,
-                  borderRadius: BORDER_RADIUS,
-                  borderColor: colors.outline,
-                  height: '80%',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}>
-                {isUploading ? (
-                  <ActivityIndicator animating={true} />
-                ) : (
-                  <>
-                    <Icon
-                      source="image-plus"
-                      size={32}
-                      color={colors.primary}
-                    />
-                    <Text
-                      style={{ marginTop: 10, color: colors.onSurface }}
-                      variant="labelMedium">
-                      Add image
-                    </Text>
-                  </>
-                )}
-              </View>
-            </TouchableRipple>
-          )}
-          {mode === 'post' && (
-            <TouchableRipple
-              onPress={() => {
-                setIsPoll(!isPoll);
-                if (!isPoll) {
-                  setPollOptions(['', '']);
-                }
-              }}
-              style={{ borderRadius: BORDER_RADIUS, marginLeft: 15 }}
-              borderless={true}>
-              <View
-                style={{
-                  borderStyle: isPoll ? 'solid' : 'dashed',
-                  aspectRatio: '1 / 1',
-                  borderWidth: 2,
-                  borderRadius: BORDER_RADIUS,
-                  borderColor: isPoll ? colors.primary : colors.outline,
-                  backgroundColor: isPoll ? colors.primaryContainer : 'transparent',
-                  height: '80%',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}>
-                <Icon
-                  source="poll"
-                  size={32}
-                  color={isPoll ? colors.onPrimaryContainer : colors.primary}
-                />
-                <Text
-                  style={{ marginTop: 10, color: isPoll ? colors.onPrimaryContainer : colors.onSurface }}
-                  variant="labelMedium">
-                  {'Create Poll'}
-                </Text>
-              </View>
-            </TouchableRipple>
-          )}
-        </View>
-      </View>
-      <Snackbar visible={error} onDismiss={() => setError(false)}>
-        Sorry, there was an error creating this {mode}.
-      </Snackbar>
-    </View>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 
-export default WriterScreen;
+const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+    backgroundColor: '#000000',
+  },
+  container: {
+    flex: 1,
+    justifyContent: 'space-between',
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#161616',
+  },
+  communityBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1C1C1E',
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 16,
+    gap: 6,
+  },
+  communityDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+    backgroundColor: '#EE2A35',
+  },
+  communityText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  postButton: {
+    backgroundColor: '#EE2A35',
+    paddingHorizontal: 18,
+    paddingVertical: 7,
+    borderRadius: 18,
+    minWidth: 64,
+    alignItems: 'center',
+  },
+  postButtonDisabled: {
+    backgroundColor: '#262626',
+  },
+  postButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  postButtonTextDisabled: {
+    color: '#666666',
+  },
+  inputContainer: {
+    flex: 1,
+    paddingHorizontal: 18,
+    paddingTop: 16,
+  },
+  textInput: {
+    fontSize: 18,
+    lineHeight: 26,
+    color: '#FFFFFF',
+    textAlignVertical: 'top',
+  },
+  bottomToolbar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderTopWidth: 0.5,
+    borderTopColor: '#161616',
+    backgroundColor: '#000000',
+  },
+  toolIcons: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+  },
+  iconButton: {
+    padding: 4,
+  },
+  counterText: {
+    color: '#8E8E93',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  counterWarning: {
+    color: '#F59E0B',
+  },
+  counterDanger: {
+    color: '#EF4444',
+  },
+});
