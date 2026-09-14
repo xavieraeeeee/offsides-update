@@ -1,380 +1,224 @@
-import { SidechatPostOrComment } from 'sidechat.js/src/types/SidechatTypes.js';
-import React, { useState } from 'react';
-import { Alert, Linking, Pressable, View } from 'react-native';
-import { Card, Chip, IconButton, Text, useTheme } from 'react-native-paper';
-import { setStringAsync as copyToClipboard } from 'expo-clipboard';
-import timesago from 'timesago';
-import AutoImage from './AutoImage';
-import AutoVideo from './AutoVideo';
-import UserAvatar from './UserAvatar';
-import Poll from './Poll';
-import { useRecyclingState } from '@shopify/flash-list';
-import { useSharedVote, castVote } from '../utils/voteStore';
-
-const BORDER_RADIUS = 12;
+import React, { useContext } from 'react';
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  StyleSheet,
+  Pressable,
+} from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { AppContext } from '../App';
+import UserContent from './UserContent';
 
 /**
- * @param {object} props
- * @param {SidechatPostOrComment} props.post
- * @returns
+ * Helper to compute short relative timestamps (e.g. 1w, 8w, 12w)
  */
-function Post({
-  post,
-  nav,
-  commentView = false,
-  repost = false,
-  minimal = false,
-  cardMode = repost ? 'outlined' : 'elevated',
-  apiInstance = null,
-  themeColors = {},
-  profileLink = true,
-}) {
-  const colors = themeColors;
-  const API = apiInstance;
-  if (!post || !API) {
-    return <></>;
-  }
-  // Shared across every card showing this post (feed, comments, profile, thread).
-  const [vote, voteCount] = useSharedVote(post.id, post.vote_status, post.vote_total);
-  const [width, setWidth] = useState();
-  const [group, setGroup] = useRecyclingState(post.group, [post]);
-  const [identity, setIdentity] = useRecyclingState(post?.identity, [post]);
-  const postID = post.id;
+function getRelativeTime(timestamp) {
+  if (!timestamp) return '1w';
+  const now = new Date();
+  const date = new Date(timestamp);
+  const diffInSeconds = Math.floor((now - date) / 1000);
 
-  // Posts made with a username can be tapped through to that user's public profile.
-  const hasUsername =
-    !!identity?.name &&
-    identity.name != 'Anonymous' &&
-    identity.posted_with_username !== false;
-  const canOpenProfile = profileLink && hasUsername && !!nav;
-  const openProfile = React.useCallback(() => {
-    if (!canOpenProfile) return;
-    if (post.authored_by_user) {
-      nav.push('MyProfile');
-    } else {
-      nav.push('UserProfile', { username: identity.name });
-    }
-  }, [canOpenProfile, post.authored_by_user, identity?.name, nav]);
+  if (diffInSeconds < 60) return `${Math.max(1, diffInSeconds)}s`;
+  const diffInMinutes = Math.floor(diffInSeconds / 60);
+  if (diffInMinutes < 60) return `${diffInMinutes}m`;
+  const diffInHours = Math.floor(diffInMinutes / 60);
+  if (diffInHours < 24) return `${diffInHours}h`;
+  const diffInDays = Math.floor(diffInHours / 24);
+  if (diffInDays < 7) return `${diffInDays}d`;
+  const diffInWeeks = Math.floor(diffInDays / 7);
+  return `${diffInWeeks}w`;
+}
 
-  const applyVote = React.useCallback(
-    action => castVote(API, postID, vote, voteCount, action),
-    [postID, API, vote, voteCount],
-  );
-  const upvote = React.useCallback(() => {
-    applyVote(vote == 'upvote' ? 'none' : 'upvote');
-  }, [vote, applyVote]);
+export default function Post({ post, navigation, onVote }) {
+  const { appState } = useContext(AppContext);
 
-  const downvote = React.useCallback(() => {
-    applyVote(vote == 'downvote' ? 'none' : 'downvote');
-  }, [vote, applyVote]);
-
-  // if (post.attachments.length > 0) {
-  //   post.attachments.forEach(a => {
-  //     if (a.type == 'youtube') console.log(post.attachments);
-  //   });
-  // }
-
-  const deletePost = React.useCallback(() => {
-    Alert.alert(
-      'Are you sure?',
-      'This will permanently delete this post and its associated comments.',
-      [
-        {
-          text: 'Confirm',
-          onPress: async () => {
-            await API.deletePostOrComment(postID);
-            nav.replace('Home');
-          },
-        },
-        {
-          text: 'Cancel',
-        },
-      ],
-    );
-  }, [postID, API]);
-
-  const createRepost = React.useCallback(() => {
-    nav.push('Writer', {
-      repostID: postID,
-      mode: "post",
-      groupID: post.group_id,
-    })
-  }, [postID]);
-
-  const MemoizedPost = React.memo(Post);
+  const groupInitial = (post.group_name || appState?.schoolGroupName || 'M')
+    .charAt(0)
+    .toUpperCase();
+  const groupTitle = post.group_name || appState?.schoolGroupName || 'McGill';
+  const timeAgo = getRelativeTime(post.created_at);
+  const voteCount = post.vote_total ?? post.score ?? 0;
 
   return (
-    <Card
-      onLayout={(event) => {
-        const newWidth = event.nativeEvent.layout.width;
-        if (newWidth !== width) setWidth(newWidth);
-      }}
-      mode={cardMode}
-      style={repost ? { marginBottom: 10 } : {}}>
-      <Card.Content>
-        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-          <Pressable onPress={openProfile} disabled={!canOpenProfile} hitSlop={4}>
-            <UserAvatar
-              group={group}
-              conversationIcon={identity?.conversation_icon}
-              size={46}
-              borderRadius={BORDER_RADIUS}
-            />
-          </Pressable>
-          <View
-            style={{
-              justifyContent: 'center',
-              flexDirection: 'column',
-              flex: 1,
-            }}>
-            <Text variant="labelLarge" style={{ marginLeft: 10 }}>
-              {timesago(post.created_at)}
-            </Text>
-            {post.identity.name != 'Anonymous' && (
-              <Text
-                variant="labelMedium"
-                onPress={canOpenProfile ? openProfile : undefined}
-                style={{
-                  marginLeft: 10,
-                  opacity: 0.75,
-                  color: canOpenProfile ? colors.primary : undefined,
-                }}>
-                @{post.identity.name}
-              </Text>
-            )}
+    <Pressable
+      style={styles.card}
+      onPress={() => navigation?.navigate('Thread', { post })}
+    >
+      {/* 1. Header: Avatar, Name + Timestamp, More Options */}
+      <View style={styles.headerRow}>
+        <View style={styles.authorContainer}>
+          <View style={styles.avatar}>
+            <Text style={styles.avatarLetter}>{groupInitial}</Text>
           </View>
-          {post.authored_by_user && (
-            <IconButton
-              icon="delete"
-              size={20}
-              style={{ marginRight: 0 }}
-              onPress={deletePost}
-            />
-          )}
+          <View style={styles.nameRow}>
+            <Text style={styles.authorName}>{groupTitle}</Text>
+            <Text style={styles.timestamp}>{timeAgo}</Text>
+          </View>
         </View>
 
-        {post.text.trim().length > 0 && (
-          <Text variant="bodyLarge" style={{ marginTop: 10, marginBottom: minimal ? 0 : 10 }}>
-            {post.text}
-          </Text>
+        <TouchableOpacity
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          onPress={() => {}}
+        >
+          <Ionicons name="ellipsis-horizontal" size={18} color="#8E8E93" />
+        </TouchableOpacity>
+      </View>
+
+      {/* 2. Post Content Body */}
+      <View style={styles.contentContainer}>
+        {post.content ? (
+          <Text style={styles.postText}>{post.content}</Text>
+        ) : (
+          <UserContent content={post} />
         )}
+      </View>
 
-        {width && !minimal &&
-          // Assets are things like images and videos
-          post.assets?.map(asset => (
-            <React.Fragment key={asset.id}>
-              {asset.type == 'image' && (
-                <AutoImage
-                  src={asset.url}
-                  fitWidth={width - 35}
-                  srcWidth={asset.width}
-                  srcHeight={asset.height}
-                  token={API.userToken}
-                  style={
-                    post.text.trim().length < 1
-                      ? { marginTop: 10, marginBottom: 10 }
-                      : { marginBottom: 10 }
-                  }
-                />
-              )}
-              {asset.type == 'video' && (
-                <AutoVideo
-                  fitWidth={width - 35}
-                  srcWidth={asset.width}
-                  srcHeight={asset.height}
-                  token={API.userToken}
-                  src={asset.url}
-                  format={asset.content_type}
-                  poster={asset.thumbnail_asset.url}
-                  style={
-                    post.text.trim().length < 1
-                      ? { marginTop: 10, marginBottom: 10 }
-                      : { marginBottom: 10 }
-                  }
-                />
-              )}
-            </React.Fragment>
-          ))}
+      {/* 3. Action Toolbar & Vote Pill */}
+      <View style={styles.actionsRow}>
+        {/* Left Action Cluster: Comments, Send, Repost, Share, Medal */}
+        <View style={styles.actionCluster}>
+          <TouchableOpacity
+            style={styles.actionItem}
+            onPress={() => navigation?.navigate('Comments', { post })}
+          >
+            <Ionicons name="chatbubble-outline" size={19} color="#FFFFFF" />
+            <Text style={styles.actionCount}>{post.comment_count ?? 0}</Text>
+          </TouchableOpacity>
 
-        {width &&
-          // Attachments are things like links and embeds
-          post.attachments.map(att => (
-            <React.Fragment key={att.id}>
-              {!!att?.youtube_id ? (
-                <Chip
-                  icon="youtube"
-                  style={{
-                    marginRight: 'auto',
-                    marginBottom: 5,
-                    maxWidth: '100%',
-                    overflow: 'hidden',
-                  }}
-                  onPress={() => Linking.openURL(att.link_url)}
-                  onLongPress={async () => await copyToClipboard(att.link_url)}>
-                  {att.title}
-                </Chip>
-              ) : att.type == 'link' ? (
-                <Chip
-                  icon="link"
-                  style={{
-                    marginRight: 'auto',
-                    marginBottom: 5,
-                    maxWidth: '100%',
-                    overflow: 'hidden',
-                  }}
-                  onPress={() => Linking.openURL(att.link_url)}
-                  onLongPress={async () => await copyToClipboard(att.link_url)}>
-                  {att.display_url}
-                </Chip>
-              ) : (
-                <></>
-              )}
-            </React.Fragment>
-          ))}
+          <TouchableOpacity style={styles.actionItem}>
+            <Ionicons name="paper-plane-outline" size={19} color="#FFFFFF" />
+          </TouchableOpacity>
 
-        {post.poll && <Poll poll={post.poll} />}
+          <TouchableOpacity style={styles.actionItem}>
+            <Ionicons name="repeat-outline" size={20} color="#FFFFFF" />
+          </TouchableOpacity>
 
-        {post.quote_post && !repost && (
-          <MemoizedPost themeColors={colors} apiInstance={apiInstance} post={post.quote_post.post} nav={nav} repost={true} />
-        )}
+          <TouchableOpacity style={styles.actionItem}>
+            <Ionicons name="share-outline" size={19} color="#FFFFFF" />
+          </TouchableOpacity>
 
-        {!minimal && <View
-          style={{
-            flexDirection: 'row',
-            alignItems: 'center',
-            marginLeft: -8,
-            marginBottom: -2,
-          }}>
-          {!commentView && (
-            <>
-              <IconButton
-                icon="message-outline"
-                onPress={() =>
-                  nav.push('Comments', {
-                    postID: post.id,
-                    postObj: post,
-                  })
-                }
-                style={{ margin: 0 }}
-                size={20}
-                iconColor={colors.onSurfaceDisabled}
-              />
-              <Text variant="titleMedium" style={{ marginRight: 10 }}>
-                {post.comment_count}
-              </Text>
-            </>
-          )}
-          {!post.dms_disabled && (
-            <IconButton
-              icon="chat-outline"
-              onPress={() =>
-                nav.push('Thread', {
-                  postID: post.id,
-                  groupID: post.group_id,
-                  type: 'post',
-                })
-              }
-              style={{ margin: 0 }}
-              size={24}
-              iconColor={colors.onSurfaceDisabled}
-            />
-          )}
-          <IconButton
-            icon="repeat-variant"
-            onPress={createRepost}
-            style={{ margin: 0 }}
-            size={24}
-            iconColor={colors.onSurfaceDisabled}
-          />
-          <View style={{ flexGrow: 1 }}></View>
-          <IconButton
-            icon="arrow-up-thick"
-            onPress={upvote}
-            style={{
-              margin: 0,
-              borderRadius: BORDER_RADIUS,
-              borderColor: colors.onSurfaceDisabled,
-              borderWidth: 2,
-            }}
-            size={20}
-            iconColor={
-              vote == 'upvote' ? colors.onPrimaryContainer : colors.onSurface
-            }
-            containerColor={vote == 'upvote' ? colors.inversePrimary : null}
-          />
-          <Text
-            variant="titleMedium"
-            style={{
-              marginRight: 10,
-              marginLeft: 10,
-              color: voteCount <= 0 ? colors.error : colors.primary,
-            }}>
-            {voteCount}
-          </Text>
-          <IconButton
-            icon="arrow-down-thick"
-            onPress={downvote}
-            style={{
-              margin: 0,
-              borderRadius: BORDER_RADIUS,
-              borderColor: colors.onSurfaceDisabled,
-              borderWidth: 2,
-            }}
-            size={20}
-            iconColor={vote == 'downvote' ? colors.onError : colors.onSurface}
-            containerColor={vote == 'downvote' ? colors.error : null}
-          />
-        </View>}
-      </Card.Content>
-    </Card>
+          <TouchableOpacity style={styles.actionItem}>
+            <Ionicons name="ribbon-outline" size={19} color="#FFFFFF" />
+          </TouchableOpacity>
+        </View>
+
+        {/* Right Action Cluster: Mint Green Vote Pill */}
+        <View style={styles.votePill}>
+          <TouchableOpacity
+            style={styles.voteButton}
+            onPress={() => onVote && onVote(post.id, 1)}
+          >
+            <Ionicons name="arrow-up" size={18} color="#FFFFFF" />
+          </TouchableOpacity>
+
+          <Text style={styles.voteCount}>{voteCount}</Text>
+
+          <TouchableOpacity
+            style={styles.voteButton}
+            onPress={() => onVote && onVote(post.id, -1)}
+          >
+            <Ionicons name="arrow-down" size={18} color="#FFFFFF" />
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Pressable>
   );
 }
 
-Post.whyDidYouRender = true;
-export default React.memo(Post);
-
-const obj = {
-  index: 0,
-  item: {
-    alias: 'Anonymous',
-    assets: [[Object]],
-    attachments: [],
-    authored_by_user: false,
-    comment_count: 0,
-    comments_disabled: false,
-    created_at: '2024-03-05T21:14:58.575Z',
-    destination: 'group',
-    dms_disabled: false,
-    follow_status: 'not_following',
-    group: {
-      analytics_name: 'mc',
-      asset_library_visibility: 'show',
-      color: '#0DD5B2',
-      group_join_type: 'email_domain',
-      group_visibility: 'private',
-      id: 'e953e1cc-7e17-46b9-b11a-98441e4135fe',
-      membership_type: 'member',
-      name: 'MC',
-      roles: [Array],
-    },
-    group_id: 'e953e1cc-7e17-46b9-b11a-98441e4135fe',
-    id: '900a353f-52bc-4595-a58b-84f4c13b560c',
-    identity: {
-      conversation_icon: [Object],
-      name: 'Anonymous',
-      posted_with_username: false,
-    },
-    is_saved: false,
-    pinned: false,
-    tags: [],
-    text: 'Me after my day of doing nothing all day',
-    type: 'post',
-    vote_status: 'none',
-    vote_total: 31,
+const styles = StyleSheet.create({
+  card: {
+    backgroundColor: '#000000',
+    paddingHorizontal: 16,
+    paddingTop: 14,
+    paddingBottom: 14,
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#161616',
   },
-  separators: {
-    highlight: [Function],
-    unhighlight: [Function],
-    updateProps: [Function],
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
   },
-};
+  authorContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  avatar: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: '#EE2A35',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
+  avatarLetter: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+    fontSize: 16,
+  },
+  nameRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 6,
+  },
+  authorName: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  timestamp: {
+    fontSize: 13,
+    color: '#8E8E93',
+    fontWeight: '500',
+  },
+  contentContainer: {
+    marginVertical: 4,
+  },
+  postText: {
+    fontSize: 16,
+    lineHeight: 22,
+    color: '#FFFFFF',
+    fontWeight: '400',
+  },
+  actionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 12,
+  },
+  actionCluster: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+  },
+  actionItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  actionCount: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  votePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1C1C1E',
+    borderRadius: 20,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    gap: 8,
+  },
+  voteButton: {
+    padding: 2,
+  },
+  voteCount: {
+    color: '#20D09B',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+});
